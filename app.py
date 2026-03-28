@@ -467,14 +467,10 @@ class FilesFrame(ctk.CTkFrame):
         if not messagebox.askyesno("DB 초기화",
                 "DB의 모든 파일 목록을 삭제합니다.\n실제 파일은 이동/삭제되지 않습니다.\n\n계속하시겠습니까?"):
             return
-        import config
-        import os
-        db_path = config.DB_PATH
         try:
-            if os.path.exists(db_path):
-                os.remove(db_path)
-            from db import init_db
-            init_db()
+            from db import get_conn
+            with get_conn() as conn:
+                conn.executescript("DELETE FROM files; DELETE FROM folders;")
             self._load()
             messagebox.showinfo("완료", "DB가 초기화되었습니다.")
         except Exception as e:
