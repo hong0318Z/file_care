@@ -765,39 +765,49 @@ class SettingsFrame(ctk.CTkFrame):
         # ── 모델명 ──
         ctk.CTkLabel(self, text="모델명", font=FONT_LABEL).grid(
             row=5, column=0, sticky="w", pady=8, padx=(0, 16))
-        self._model_var = tk.StringVar(value=settings.get("model", "claude-sonnet-4-5"))
+        self._model_var = tk.StringVar(value=settings.get("model", "claude-sonnet-4.5"))
         ctk.CTkEntry(self, textvariable=self._model_var,
                      height=40, font=FONT_LABEL).grid(
             row=5, column=1, sticky="ew", pady=8, padx=(0, 8))
+        self._list_btn = ctk.CTkButton(self, text="📋 지원 모델 조회", width=140, height=40,
+                                       fg_color="#2d4a22", hover_color="#1f3318",
+                                       command=self._list_models)
+        self._list_btn.grid(row=5, column=2, pady=8)
         ctk.CTkLabel(self,
-            text="예: claude-sonnet-4-5  /  gpt-4o  /  claude-3-5-sonnet",
+            text="모델명을 모르면 [지원 모델 조회] 버튼으로 확인하세요",
             font=FONT_SMALL, text_color="gray60").grid(
             row=6, column=1, columnspan=2, sticky="w")
 
+        # 모델 목록 표시
+        self._models_lbl = ctk.CTkLabel(self, text="", font=FONT_SMALL,
+                                        text_color="#aaaaaa", wraplength=620,
+                                        justify="left")
+        self._models_lbl.grid(row=7, column=0, columnspan=3, sticky="w", pady=2)
+
         # ── DB 경로 ──
         ctk.CTkLabel(self, text="DB 파일 경로", font=FONT_LABEL).grid(
-            row=7, column=0, sticky="w", pady=8, padx=(0, 16))
+            row=8, column=0, sticky="w", pady=8, padx=(0, 16))
         self._db_var = tk.StringVar(value=settings.get("db_path", "file_care.db"))
         ctk.CTkEntry(self, textvariable=self._db_var,
                      height=40, font=FONT_LABEL).grid(
-            row=7, column=1, sticky="ew", pady=8, padx=(0, 8))
+            row=8, column=1, sticky="ew", pady=8, padx=(0, 8))
 
         # ── 배치 크기 ──
         ctk.CTkLabel(self, text="배치 크기 (파일 수/요청)", font=FONT_LABEL).grid(
-            row=8, column=0, sticky="w", pady=8, padx=(0, 16))
+            row=9, column=0, sticky="w", pady=8, padx=(0, 16))
         self._batch_var = tk.StringVar(value=str(settings.get("batch_size", 300)))
         ctk.CTkEntry(self, textvariable=self._batch_var,
                      width=100, height=40, font=FONT_LABEL).grid(
-            row=8, column=1, sticky="w", pady=8)
+            row=9, column=1, sticky="w", pady=8)
 
         # ── 저장 버튼 ──
         ctk.CTkButton(self, text="💾  설정 저장", height=44,
                       font=("Malgun Gothic", 13, "bold"),
                       command=self._save).grid(
-            row=9, column=0, columnspan=3, sticky="w", pady=20)
+            row=10, column=0, columnspan=3, sticky="w", pady=20)
 
         self._result_lbl = ctk.CTkLabel(self, text="", font=FONT_LABEL)
-        self._result_lbl.grid(row=10, column=0, columnspan=3, sticky="w")
+        self._result_lbl.grid(row=11, column=0, columnspan=3, sticky="w")
 
     def _save(self):
         token = self._token_var.get().strip()
@@ -881,6 +891,56 @@ class SettingsFrame(ctk.CTkFrame):
             finally:
                 self.after(0, lambda: self._test_btn.configure(
                     state="normal", text="🔌 연결 테스트"))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _list_models(self):
+        token = self._token_var.get().strip()
+        if not token:
+            self._models_lbl.configure(
+                text="⚠ 토큰을 먼저 입력하세요.", text_color=COLOR_FAILED)
+            return
+
+        self._list_btn.configure(state="disabled", text="조회 중...")
+        self._models_lbl.configure(text="모델 목록 가져오는 중...", text_color="gray60")
+
+        def worker():
+            import httpx
+            import config
+            try:
+                r = httpx.get(
+                    f"{config.COPILOT_BASE_URL}/models",
+                    headers={
+                        "Authorization": f"Bearer {token}",
+                        "Copilot-Integration-Id": "vscode-chat",
+                    },
+                    timeout=15.0,
+                )
+                if r.status_code == 200:
+                    data = r.json()
+                    # 모델 ID 목록 추출
+                    models = data.get("data", data) if isinstance(data, dict) else data
+                    ids = [m.get("id", str(m)) for m in models]
+                    claude_ids = [m for m in ids if "claude" in m.lower()]
+                    other_ids  = [m for m in ids if "claude" not in m.lower()]
+                    lines = []
+                    if claude_ids:
+                        lines.append("🟣 Claude: " + "  |  ".join(claude_ids))
+                    if other_ids:
+                        lines.append("⚪ 기타: " + "  |  ".join(other_ids[:10]))
+                    msg = "\n".join(lines) if lines else f"원본: {r.text[:300]}"
+                    self.after(0, lambda m=msg: self._models_lbl.configure(
+                        text=m, text_color="#cccccc"))
+                else:
+                    self.after(0, lambda: self._models_lbl.configure(
+                        text=f"HTTP {r.status_code}: {r.text[:200]}",
+                        text_color=COLOR_FAILED))
+            except Exception as e:
+                self.after(0, lambda err=str(e): self._models_lbl.configure(
+                    text=f"오류: {err[:200]}", text_color=COLOR_FAILED))
+            finally:
+                self.after(0, lambda: self._list_btn.configure(
+                    state="normal", text="📋 지원 모델 조회"))
 
         threading.Thread(target=worker, daemon=True).start()
 
