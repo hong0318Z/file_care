@@ -19,10 +19,13 @@ ctk.set_default_color_theme("blue")
 
 # ── 설정 파일 경로 ──────────────────────────────────────────
 def _settings_path() -> Path:
+    """항상 실행 파일(또는 스크립트)과 같은 폴더의 settings.json"""
     if getattr(sys, "frozen", False):
-        base = Path(sys.executable).parent
+        # PyInstaller exe
+        base = Path(sys.executable).resolve().parent
     else:
-        base = Path(__file__).parent
+        # python app.py
+        base = Path(os.path.abspath(__file__)).parent
     return base / "settings.json"
 
 
@@ -33,11 +36,14 @@ def load_settings() -> dict:
             return json.loads(p.read_text(encoding="utf-8"))
         except Exception:
             pass
-    return {}
+    return {"github_token": "", "db_path": "file_care.db",
+            "batch_size": 300, "model": "claude-sonnet-4-5"}
 
 
 def save_settings(data: dict):
-    _settings_path().write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    p = _settings_path()
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
 # ── 공통 스타일 ────────────────────────────────────────────
@@ -342,9 +348,12 @@ class FilesFrame(ctk.CTkFrame):
         ctk.CTkButton(btn_row, text="↩  선택 복원", width=120, height=34,
                       fg_color="#2a5e8a", hover_color="#1e4d73",
                       command=self._include_selected).grid(row=0, column=1, padx=(0, 8))
+        ctk.CTkButton(btn_row, text="🗑  DB 초기화", width=120, height=34,
+                      fg_color="#7b1f1f", hover_color="#5c1515",
+                      command=self._reset_db).grid(row=0, column=2, padx=(0, 8))
         self._sel_label = ctk.CTkLabel(btn_row, text="", font=FONT_SMALL,
                                        text_color="gray60")
-        self._sel_label.grid(row=0, column=2, padx=12)
+        self._sel_label.grid(row=0, column=3, padx=12)
 
         # 트리뷰 (파일 테이블)
         tree_frame = ctk.CTkFrame(self)
@@ -453,6 +462,23 @@ class FilesFrame(ctk.CTkFrame):
         for i, (_, iid) in enumerate(items):
             self._tree.move(iid, "", i)
         self._sort_asc = not self._sort_asc
+
+    def _reset_db(self):
+        if not messagebox.askyesno("DB 초기화",
+                "DB의 모든 파일 목록을 삭제합니다.\n실제 파일은 이동/삭제되지 않습니다.\n\n계속하시겠습니까?"):
+            return
+        import config
+        import os
+        db_path = config.DB_PATH
+        try:
+            if os.path.exists(db_path):
+                os.remove(db_path)
+            from db import init_db
+            init_db()
+            self._load()
+            messagebox.showinfo("완료", "DB가 초기화되었습니다.")
+        except Exception as e:
+            messagebox.showerror("오류", f"초기화 실패: {e}")
 
 
 # ══════════════════════════════════════════════════════════
@@ -703,58 +729,80 @@ class SettingsFrame(ctk.CTkFrame):
         self.grid_columnconfigure(1, weight=1)
 
         ctk.CTkLabel(self, text="⚙️  설정", font=FONT_TITLE).grid(
-            row=0, column=0, columnspan=2, sticky="w", pady=(0, 20))
+            row=0, column=0, columnspan=3, sticky="w", pady=(0, 20))
 
         settings = load_settings()
 
-        # GitHub Token
+        # ── GitHub Token ──
         ctk.CTkLabel(self, text="GitHub Token", font=FONT_LABEL).grid(
             row=1, column=0, sticky="w", pady=8, padx=(0, 16))
         self._token_var = tk.StringVar(value=settings.get("github_token", ""))
-        token_entry = ctk.CTkEntry(self, textvariable=self._token_var,
-                                   show="*", height=40, font=FONT_LABEL)
-        token_entry.grid(row=1, column=1, sticky="ew", pady=8)
+        self._token_entry = ctk.CTkEntry(self, textvariable=self._token_var,
+                                         show="*", height=40, font=FONT_LABEL)
+        self._token_entry.grid(row=1, column=1, sticky="ew", pady=8, padx=(0, 8))
+
+        # 연결 테스트 버튼
+        self._test_btn = ctk.CTkButton(self, text="🔌 연결 테스트", width=130, height=40,
+                                       fg_color="#1a4a6e", hover_color="#163d5a",
+                                       command=self._test_connection)
+        self._test_btn.grid(row=1, column=2, pady=8)
 
         ctk.CTkLabel(self,
-            text="GitHub Personal Access Token 또는 GitHub Copilot API 토큰",
+            text="GitHub Personal Access Token (repo + copilot 권한 필요)",
             font=FONT_SMALL, text_color="gray60").grid(
-            row=2, column=1, sticky="w")
+            row=2, column=1, columnspan=2, sticky="w")
 
-        # 토큰 보기/숨기기
         self._show_token = tk.BooleanVar(value=False)
         ctk.CTkCheckBox(self, text="토큰 표시", variable=self._show_token,
                         font=FONT_SMALL,
-                        command=lambda: token_entry.configure(
+                        command=lambda: self._token_entry.configure(
                             show="" if self._show_token.get() else "*"
-                        )).grid(row=3, column=1, sticky="w", pady=4)
+                        )).grid(row=3, column=1, sticky="w", pady=2)
 
-        # DB 경로
+        # ── 연결 테스트 결과 ──
+        self._test_lbl = ctk.CTkLabel(self, text="", font=FONT_LABEL, wraplength=600)
+        self._test_lbl.grid(row=4, column=0, columnspan=3, sticky="w", pady=4)
+
+        # ── 모델명 ──
+        ctk.CTkLabel(self, text="모델명", font=FONT_LABEL).grid(
+            row=5, column=0, sticky="w", pady=8, padx=(0, 16))
+        self._model_var = tk.StringVar(value=settings.get("model", "claude-sonnet-4-5"))
+        ctk.CTkEntry(self, textvariable=self._model_var,
+                     height=40, font=FONT_LABEL).grid(
+            row=5, column=1, sticky="ew", pady=8, padx=(0, 8))
+        ctk.CTkLabel(self,
+            text="예: claude-sonnet-4-5  /  gpt-4o  /  claude-3-5-sonnet",
+            font=FONT_SMALL, text_color="gray60").grid(
+            row=6, column=1, columnspan=2, sticky="w")
+
+        # ── DB 경로 ──
         ctk.CTkLabel(self, text="DB 파일 경로", font=FONT_LABEL).grid(
-            row=4, column=0, sticky="w", pady=8, padx=(0, 16))
+            row=7, column=0, sticky="w", pady=8, padx=(0, 16))
         self._db_var = tk.StringVar(value=settings.get("db_path", "file_care.db"))
         ctk.CTkEntry(self, textvariable=self._db_var,
                      height=40, font=FONT_LABEL).grid(
-            row=4, column=1, sticky="ew", pady=8)
+            row=7, column=1, sticky="ew", pady=8, padx=(0, 8))
 
-        # 배치 크기
+        # ── 배치 크기 ──
         ctk.CTkLabel(self, text="배치 크기 (파일 수/요청)", font=FONT_LABEL).grid(
-            row=5, column=0, sticky="w", pady=8, padx=(0, 16))
+            row=8, column=0, sticky="w", pady=8, padx=(0, 16))
         self._batch_var = tk.StringVar(value=str(settings.get("batch_size", 300)))
         ctk.CTkEntry(self, textvariable=self._batch_var,
                      width=100, height=40, font=FONT_LABEL).grid(
-            row=5, column=1, sticky="w", pady=8)
+            row=8, column=1, sticky="w", pady=8)
 
-        # 저장 버튼
+        # ── 저장 버튼 ──
         ctk.CTkButton(self, text="💾  설정 저장", height=44,
                       font=("Malgun Gothic", 13, "bold"),
                       command=self._save).grid(
-            row=6, column=0, columnspan=2, sticky="w", pady=20)
+            row=9, column=0, columnspan=3, sticky="w", pady=20)
 
         self._result_lbl = ctk.CTkLabel(self, text="", font=FONT_LABEL)
-        self._result_lbl.grid(row=7, column=0, columnspan=2, sticky="w")
+        self._result_lbl.grid(row=10, column=0, columnspan=3, sticky="w")
 
     def _save(self):
         token = self._token_var.get().strip()
+        model = self._model_var.get().strip() or "claude-sonnet-4-5"
         db_path = self._db_var.get().strip() or "file_care.db"
         try:
             batch = int(self._batch_var.get().strip())
@@ -763,20 +811,62 @@ class SettingsFrame(ctk.CTkFrame):
 
         save_settings({
             "github_token": token,
+            "model": model,
             "db_path": db_path,
             "batch_size": batch,
         })
 
-        # 런타임 config 업데이트
+        # 런타임 config 즉시 반영
         import config
-        if token:
-            os.environ["GITHUB_TOKEN"] = token
-            config.GITHUB_TOKEN = token
+        config.GITHUB_TOKEN = token
+        config.MODEL = model
         config.DB_PATH = db_path
         config.BATCH_SIZE = batch
+        os.environ["GITHUB_TOKEN"] = token
 
         self._result_lbl.configure(text="✅ 저장 완료!", text_color=COLOR_DONE)
         self.after(3000, lambda: self._result_lbl.configure(text=""))
+
+    def _test_connection(self):
+        token = self._token_var.get().strip()
+        model = self._model_var.get().strip() or "claude-sonnet-4-5"
+        if not token:
+            self._test_lbl.configure(
+                text="⚠ 토큰을 먼저 입력하세요.", text_color=COLOR_FAILED)
+            return
+
+        self._test_btn.configure(state="disabled", text="테스트 중...")
+        self._test_lbl.configure(text="연결 확인 중...", text_color="gray60")
+
+        def worker():
+            try:
+                from openai import OpenAI
+                import config
+                client = OpenAI(api_key=token, base_url=config.COPILOT_BASE_URL)
+                resp = client.chat.completions.create(
+                    model=model,
+                    max_tokens=16,
+                    messages=[{"role": "user", "content": "ping"}]
+                )
+                reply = resp.choices[0].message.content or "(응답 없음)"
+                self.after(0, self._test_lbl.configure,
+                           {"text": f"✅ 연결 성공!  모델: {model}  응답: {reply[:60]}",
+                            "text_color": COLOR_DONE})
+            except Exception as e:
+                err = str(e)
+                hint = ""
+                if "model_not_supported" in err or "not supported" in err.lower():
+                    hint = "\n→ 모델명을 변경해 보세요. (예: claude-3-5-sonnet, gpt-4o)"
+                elif "401" in err or "unauthorized" in err.lower():
+                    hint = "\n→ 토큰이 올바르지 않거나 Copilot 권한이 없습니다."
+                self.after(0, self._test_lbl.configure,
+                           {"text": f"❌ 연결 실패: {err[:120]}{hint}",
+                            "text_color": COLOR_FAILED})
+            finally:
+                self.after(0, self._test_btn.configure,
+                           {"state": "normal", "text": "🔌 연결 테스트"})
+
+        threading.Thread(target=worker, daemon=True).start()
 
 
 # ══════════════════════════════════════════════════════════
@@ -796,14 +886,19 @@ def _fmt_size(b):
 #  진입점
 # ══════════════════════════════════════════════════════════
 if __name__ == "__main__":
+    import config
     from db import init_db
-    # settings.json에서 DB 경로 로드
+
+    # settings.json → config 런타임 반영
     s = load_settings()
+    if s.get("github_token"):
+        config.GITHUB_TOKEN = s["github_token"]
+        os.environ["GITHUB_TOKEN"] = s["github_token"]
+    if s.get("model"):
+        config.MODEL = s["model"]
     if s.get("db_path"):
-        import config
         config.DB_PATH = s["db_path"]
     if s.get("batch_size"):
-        import config
         config.BATCH_SIZE = s["batch_size"]
 
     init_db()
