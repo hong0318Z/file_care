@@ -1,0 +1,5 @@
+{
+  "github_token": "",
+  "db_path": "file_care.db",
+  "batch_size": 300
+}
