@@ -1,6 +1,6 @@
 import json
-import anthropic
-from config import ANTHROPIC_API_KEY, MODEL, MAX_TOKENS, BATCH_SIZE
+from openai import OpenAI
+from config import GITHUB_TOKEN, COPILOT_BASE_URL, MODEL, MAX_TOKENS, BATCH_SIZE
 from db import (
     get_files_by_status, get_folders_by_parent, set_status, get_all_files
 )
@@ -75,12 +75,15 @@ def _fmt_size(bytes_val: int) -> str:
 
 def classify(parent_dir: str = None):
     """pending 상태의 파일들을 LLM으로 분류."""
-    if not ANTHROPIC_API_KEY:
-        console.print("[red]오류: ANTHROPIC_API_KEY 환경변수가 설정되지 않았습니다.[/red]")
-        console.print("  export ANTHROPIC_API_KEY=your_key_here")
+    if not GITHUB_TOKEN:
+        console.print("[red]오류: GITHUB_TOKEN 환경변수가 설정되지 않았습니다.[/red]")
+        console.print("  export GITHUB_TOKEN=ghp_xxxx")
         return
 
-    client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+    client = OpenAI(
+        api_key=GITHUB_TOKEN,
+        base_url=COPILOT_BASE_URL,
+    )
 
     pending_files = get_files_by_status("pending", parent_dir)
     if not pending_files:
@@ -114,12 +117,12 @@ def classify(parent_dir: str = None):
                 prompt = _build_prompt(folder_context, batch)
 
                 try:
-                    response = client.messages.create(
+                    response = client.chat.completions.create(
                         model=MODEL,
                         max_tokens=MAX_TOKENS,
                         messages=[{"role": "user", "content": prompt}]
                     )
-                    raw = response.content[0].text.strip()
+                    raw = response.choices[0].message.content.strip()
 
                     # JSON 파싱
                     if raw.startswith("```"):

@@ -1,7 +1,8 @@
 import os
 
-# Claude API
-ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
+# GitHub Copilot API (OpenAI 호환)
+GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN", "")
+COPILOT_BASE_URL = "https://api.githubcopilot.com"
 MODEL = "claude-sonnet-4-5"
 MAX_TOKENS = 8192
 MAX_CONTEXT_TOKENS = 120000
