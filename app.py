@@ -584,9 +584,8 @@ class ClassifyFrame(ctk.CTkFrame):
 
     def _on_progress(self, done: int, total: int, msg: str):
         pct = done / total if total else 0
-        self.after(0, self._progress.set, pct)
-        self.after(0, self._status_lbl.configure,
-                   {"text": f"{done}/{total}  {msg}"})
+        self.after(0, lambda p=pct: self._progress.set(p))
+        self.after(0, lambda m=f"{done}/{total}  {msg}": self._status_lbl.configure(text=m))
 
     def _on_done(self):
         self._cls_btn.configure(state="normal", text="🤖  LLM 분류 시작")
@@ -829,7 +828,7 @@ class SettingsFrame(ctk.CTkFrame):
 
     def _test_connection(self):
         token = self._token_var.get().strip()
-        model = self._model_var.get().strip() or "claude-sonnet-4-5"
+        model = self._model_var.get().strip() or "claude-sonnet-4.5"
         if not token:
             self._test_lbl.configure(
                 text="⚠ 토큰을 먼저 입력하세요.", text_color=COLOR_FAILED)
@@ -841,30 +840,38 @@ class SettingsFrame(ctk.CTkFrame):
         def worker():
             try:
                 from openai import OpenAI
+                import httpx
                 import config
-                client = OpenAI(api_key=token, base_url=config.COPILOT_BASE_URL)
+                # 타임아웃 15초 설정
+                client = OpenAI(
+                    api_key=token,
+                    base_url=config.COPILOT_BASE_URL,
+                    timeout=15.0,
+                )
                 resp = client.chat.completions.create(
                     model=model,
                     max_tokens=16,
                     messages=[{"role": "user", "content": "ping"}]
                 )
                 reply = resp.choices[0].message.content or "(응답 없음)"
-                self.after(0, self._test_lbl.configure,
-                           {"text": f"✅ 연결 성공!  모델: {model}  응답: {reply[:60]}",
-                            "text_color": COLOR_DONE})
+                self.after(0, lambda: self._test_lbl.configure(
+                    text=f"✅ 연결 성공!  모델: {model}  응답: {reply[:60]}",
+                    text_color=COLOR_DONE))
             except Exception as e:
                 err = str(e)
                 hint = ""
                 if "model_not_supported" in err or "not supported" in err.lower():
-                    hint = "\n→ 모델명을 변경해 보세요. (예: claude-3-5-sonnet, gpt-4o)"
+                    hint = "\n→ 모델명이 틀렸습니다. 예: claude-sonnet-4.5"
                 elif "401" in err or "unauthorized" in err.lower():
                     hint = "\n→ 토큰이 올바르지 않거나 Copilot 권한이 없습니다."
-                self.after(0, self._test_lbl.configure,
-                           {"text": f"❌ 연결 실패: {err[:120]}{hint}",
-                            "text_color": COLOR_FAILED})
+                elif "timed out" in err.lower() or "timeout" in err.lower():
+                    hint = "\n→ 네트워크 연결을 확인하세요."
+                self.after(0, lambda: self._test_lbl.configure(
+                    text=f"❌ 연결 실패: {err[:150]}{hint}",
+                    text_color=COLOR_FAILED))
             finally:
-                self.after(0, self._test_btn.configure,
-                           {"state": "normal", "text": "🔌 연결 테스트"})
+                self.after(0, lambda: self._test_btn.configure(
+                    state="normal", text="🔌 연결 테스트"))
 
         threading.Thread(target=worker, daemon=True).start()
 

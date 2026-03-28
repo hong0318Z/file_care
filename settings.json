@@ -1,5 +1,6 @@
 {
   "github_token": "",
+  "model": "claude-sonnet-4.5",
   "db_path": "file_care.db",
   "batch_size": 300
 }
