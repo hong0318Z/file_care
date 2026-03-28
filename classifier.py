@@ -77,7 +77,9 @@ def classify(parent_dir: str = None):
     """pending 상태의 파일들을 LLM으로 분류."""
     if not GITHUB_TOKEN:
         console.print("[red]오류: GITHUB_TOKEN 환경변수가 설정되지 않았습니다.[/red]")
-        console.print("  export GITHUB_TOKEN=ghp_xxxx")
+        console.print("  PowerShell:  $env:GITHUB_TOKEN = 'ghp_xxxx'")
+        console.print("  CMD:         set GITHUB_TOKEN=ghp_xxxx")
+        console.print("  Linux/Mac:   export GITHUB_TOKEN=ghp_xxxx")
         return
 
     client = OpenAI(
