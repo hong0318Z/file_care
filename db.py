@@ -121,6 +121,24 @@ def get_stats() -> dict:
         return {r["status"]: {"count": r["cnt"], "bytes": r["total_bytes"] or 0} for r in rows}
 
 
+def get_scanned_dirs() -> list:
+    """스캔된 parent_dir 목록과 상태별 파일 수 반환"""
+    with get_conn() as conn:
+        rows = conn.execute("""
+            SELECT parent_dir,
+                   COUNT(*) as total,
+                   SUM(CASE WHEN status='pending'    THEN 1 ELSE 0 END) as pending,
+                   SUM(CASE WHEN status='classified' THEN 1 ELSE 0 END) as classified,
+                   SUM(CASE WHEN status='done'       THEN 1 ELSE 0 END) as done,
+                   SUM(CASE WHEN status='excluded'   THEN 1 ELSE 0 END) as excluded,
+                   SUM(CASE WHEN status='failed'     THEN 1 ELSE 0 END) as failed
+            FROM files
+            GROUP BY parent_dir
+            ORDER BY parent_dir
+        """).fetchall()
+        return [dict(r) for r in rows]
+
+
 def get_all_files(parent_dir: str = None) -> list:
     with get_conn() as conn:
         if parent_dir:

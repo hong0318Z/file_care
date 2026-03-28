@@ -21,24 +21,19 @@ def _build_prompt(folder_context: str, files_batch: list) -> str:
         f"  [{f['id']}] {f['filename']} ({f['extension'] or '확장자없음'}, {_fmt_size(f['size_bytes'])})"
         for f in files_batch
     )
-    return f"""당신은 파일 정리 전문가입니다. 기존 폴더 구조를 참고하여 각 파일을 어느 폴더에 넣을지 결정하세요.
+    return f"""당신은 파일 정리 전문가입니다. 아래 파일들을 분석해서 각 파일이 들어갈 폴더명을 결정하세요.
 
 {folder_context}
 
 [분류할 파일 목록]
 {file_list}
 
-## 분류 규칙
-1. 기존 폴더가 있으면 이름과 내용을 참고해 가장 적합한 폴더를 선택하세요.
-2. 맞는 폴더가 없으면 파일명/확장자로 추측하여 새 폴더명을 제안하세요.
-   - 업무 관련 (기획서, 보고서, 계약, 제안, 회의 등 단어 포함): 업무
-   - 이미지 (.jpg, .png, .gif, .webp, .heic 등): 이미지
-   - 영상 (.mp4, .mov, .avi, .mkv 등): 영상
-   - 문서 (.pdf, .docx, .xlsx, .pptx, .hwp 등): 문서
-   - 압축 (.zip, .rar, .7z 등): 압축파일
-   - 코드 (.py, .js, .ts, .java, .cpp 등): 코드
-   - 기타: 기타
-3. 확신이 없어도 최선을 다해 추측하세요. null은 정말 판단 불가한 경우만 사용하세요.
+## 규칙
+1. 파일명과 확장자를 보고 내용을 추측해서 폴더명을 자유롭게 정하세요.
+2. 기존 폴더가 있으면 참고만 하고, 더 적합한 이름이 있으면 새로 만드세요.
+3. 폴더명은 한국어로 짧고 명확하게 (예: 업무문서, 이미지, 영상, 설치파일, 코드, 개인자료, 강의자료 등)
+4. 비슷한 파일들은 같은 폴더로 묶으세요.
+5. 절대 null 반환 금지 — 애매하면 "기타"로라도 분류하세요.
 
 ## 응답 형식 (JSON만 출력, 다른 텍스트 없음)
 {{"results": [{{"id": 파일ID, "target_folder": "폴더명", "reason": "한 줄 이유"}}, ...]}}
@@ -105,11 +100,13 @@ def classify(parent_dir: str = None, progress_callback=None, log_callback=None):
             prompt = _build_prompt(folder_context, batch)
 
             try:
+                log(f"  → API 요청: {len(batch)}개 파일 (배치 {i//batch_size+1})")
                 r = httpx.post(url, headers=headers, json={
                     "model": config.MODEL,
                     "max_tokens": config.MAX_TOKENS,
                     "messages": [{"role": "user", "content": prompt}],
                 }, timeout=120.0)
+                log(f"  ← HTTP {r.status_code} ({len(r.content)} bytes)")
                 r.raise_for_status()
                 raw = r.json()["choices"][0]["message"]["content"].strip()
 

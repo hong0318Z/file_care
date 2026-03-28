@@ -488,58 +488,103 @@ class ClassifyFrame(ctk.CTkFrame):
     def __init__(self, master):
         super().__init__(master, fg_color="transparent")
         self.grid_columnconfigure(0, weight=1)
+        self.grid_rowconfigure(3, weight=1)
 
         ctk.CTkLabel(self, text="🤖  LLM 분류", font=FONT_TITLE).grid(
-            row=0, sticky="w", pady=(0, 16))
+            row=0, sticky="w", pady=(0, 10))
 
-        # 토큰 표시 (설정에서 가져옴)
+        # ── 토큰 상태 ──
         settings = load_settings()
         token = settings.get("github_token", "")
-        info_text = "✅ GitHub 토큰 설정됨" if token else "⚠️ GitHub 토큰 미설정 (설정 탭에서 입력)"
-        info_color = COLOR_DONE if token else COLOR_FAILED
-        ctk.CTkLabel(self, text=info_text, font=FONT_LABEL,
-                     text_color=info_color).grid(row=1, sticky="w", pady=4)
+        info_text = "✅ GitHub 토큰 설정됨" if token else "⚠️ 토큰 미설정 — [설정] 탭에서 입력하세요"
+        ctk.CTkLabel(self, text=info_text, font=FONT_SMALL,
+                     text_color=COLOR_DONE if token else COLOR_FAILED).grid(
+            row=1, sticky="w", pady=(0, 8))
 
-        # 특정 폴더만 처리 옵션
-        dir_row = ctk.CTkFrame(self, fg_color="transparent")
-        dir_row.grid(row=2, sticky="ew", pady=4)
-        dir_row.grid_columnconfigure(1, weight=1)
-        ctk.CTkLabel(dir_row, text="특정 폴더만:", font=FONT_LABEL).grid(
-            row=0, column=0, padx=(0, 8))
-        self._dir_var = tk.StringVar()
-        ctk.CTkEntry(dir_row, textvariable=self._dir_var,
-                     placeholder_text="비워두면 전체 처리",
-                     height=36, font=FONT_LABEL).grid(row=0, column=1, sticky="ew", padx=(0, 8))
-        ctk.CTkButton(dir_row, text="선택", width=80, height=36,
-                      command=lambda: self._dir_var.set(
-                          filedialog.askdirectory() or self._dir_var.get()
-                      )).grid(row=0, column=2)
+        # ── 스캔된 디렉토리 목록 ──
+        top = ctk.CTkFrame(self)
+        top.grid(row=2, sticky="ew", pady=(0, 8))
+        top.grid_columnconfigure(0, weight=1)
 
-        # 분류 버튼
+        hdr = ctk.CTkFrame(top, fg_color="transparent")
+        hdr.grid(row=0, sticky="ew", padx=10, pady=(8, 4))
+        hdr.grid_columnconfigure(0, weight=1)
+        ctk.CTkLabel(hdr, text="스캔된 폴더 목록  (분류할 폴더를 선택하세요)",
+                     font=FONT_LABEL).grid(row=0, column=0, sticky="w")
+        ctk.CTkButton(hdr, text="🔄", width=32, height=28,
+                      command=self._reload_dirs).grid(row=0, column=1)
+
+        dir_frame = ctk.CTkFrame(top, height=160)
+        dir_frame.grid(row=1, sticky="ew", padx=10, pady=(0, 8))
+        dir_frame.grid_columnconfigure(0, weight=1)
+        dir_frame.grid_rowconfigure(0, weight=1)
+        dir_frame.grid_propagate(False)
+
+        self._dir_tree = ttk.Treeview(dir_frame,
+                                       columns=("path", "pending", "total"),
+                                       show="headings", style="Dark.Treeview",
+                                       selectmode="extended", height=5)
+        self._dir_tree.heading("path",    text="폴더 경로")
+        self._dir_tree.heading("pending", text="대기")
+        self._dir_tree.heading("total",   text="전체")
+        self._dir_tree.column("path",    width=520, minwidth=200)
+        self._dir_tree.column("pending", width=60,  anchor="center")
+        self._dir_tree.column("total",   width=60,  anchor="center")
+        dsb = ttk.Scrollbar(dir_frame, orient="vertical", command=self._dir_tree.yview)
+        self._dir_tree.configure(yscrollcommand=dsb.set)
+        self._dir_tree.grid(row=0, column=0, sticky="nsew")
+        dsb.grid(row=0, column=1, sticky="ns")
+
+        # 전체 선택 / 선택 해제
+        sel_row = ctk.CTkFrame(top, fg_color="transparent")
+        sel_row.grid(row=2, sticky="w", padx=10, pady=(0, 8))
+        ctk.CTkButton(sel_row, text="전체 선택", width=90, height=28,
+                      command=lambda: self._dir_tree.selection_set(
+                          self._dir_tree.get_children())).grid(row=0, column=0, padx=(0, 6))
+        ctk.CTkButton(sel_row, text="선택 해제", width=90, height=28,
+                      fg_color="#555", hover_color="#444",
+                      command=lambda: self._dir_tree.selection_remove(
+                          self._dir_tree.get_children())).grid(row=0, column=1)
+
+        # ── 분류 버튼 + 진행바 ──
+        ctrl = ctk.CTkFrame(self, fg_color="transparent")
+        ctrl.grid(row=3, sticky="ew")
+        ctrl.grid_columnconfigure(0, weight=1)
+
         self._cls_btn = ctk.CTkButton(
-            self, text="🤖  LLM 분류 시작", height=46,
-            font=("Malgun Gothic", 13, "bold"),
-            command=self._run)
-        self._cls_btn.grid(row=3, sticky="ew", pady=10)
+            ctrl, text="🤖  선택한 폴더 LLM 분류 시작", height=44,
+            font=("Malgun Gothic", 13, "bold"), command=self._run)
+        self._cls_btn.grid(row=0, sticky="ew", pady=(0, 6))
 
-        # 진행바
-        self._progress = ctk.CTkProgressBar(self)
+        self._progress = ctk.CTkProgressBar(ctrl)
         self._progress.set(0)
-        self._progress.grid(row=4, sticky="ew", pady=4)
+        self._progress.grid(row=1, sticky="ew", pady=(0, 4))
 
-        self._status_lbl = ctk.CTkLabel(self, text="", font=FONT_SMALL,
-                                        text_color="gray60")
-        self._status_lbl.grid(row=5, sticky="w")
+        self._status_lbl = ctk.CTkLabel(ctrl, text="", font=FONT_SMALL,
+                                         text_color="gray60")
+        self._status_lbl.grid(row=2, sticky="w")
 
-        # 로그
-        ctk.CTkLabel(self, text="분류 로그", font=FONT_LABEL).grid(
-            row=6, sticky="w", pady=(12, 4))
+        # ── 실시간 로그 ──
+        ctk.CTkLabel(self, text="실시간 로그  (API 요청/응답 포함)", font=FONT_LABEL).grid(
+            row=4, sticky="w", pady=(10, 4))
         self._log = ctk.CTkTextbox(self, font=FONT_MONO, state="disabled")
-        self._log.grid(row=7, sticky="nsew")
-        self.grid_rowconfigure(7, weight=1)
+        self._log.grid(row=5, sticky="nsew")
+        self.grid_rowconfigure(5, weight=1)
 
-        self._total = 0
-        self._done = 0
+        self._reload_dirs()
+
+    def _reload_dirs(self):
+        from db import get_scanned_dirs
+        self._dir_tree.delete(*self._dir_tree.get_children())
+        dirs = get_scanned_dirs()
+        for d in dirs:
+            pending = d["pending"]
+            total   = d["total"]
+            tag = "pending" if pending > 0 else "done"
+            self._dir_tree.insert("", "end",
+                values=(d["parent_dir"], pending, total), tags=(tag,))
+        self._dir_tree.tag_configure("pending", foreground=COLOR_PENDING)
+        self._dir_tree.tag_configure("done",    foreground=COLOR_EXCLUDED)
 
     def _log_write(self, text: str):
         self._log.configure(state="normal")
@@ -548,36 +593,46 @@ class ClassifyFrame(ctk.CTkFrame):
         self._log.configure(state="disabled")
 
     def _run(self):
-        settings = load_settings()
-        token = settings.get("github_token", "")
+        import config
+        token = config.GITHUB_TOKEN
         if not token:
             messagebox.showerror("토큰 없음",
-                "GitHub 토큰이 설정되지 않았습니다.\n[설정] 탭에서 토큰을 입력해주세요.")
+                "GitHub 토큰이 설정되지 않았습니다.\n[설정] 탭에서 토큰을 입력하고 저장하세요.")
             return
 
-        os.environ["GITHUB_TOKEN"] = token
+        selected = self._dir_tree.selection()
+        if not selected:
+            messagebox.showwarning("선택 없음", "분류할 폴더를 목록에서 선택하세요.\n(Ctrl+클릭으로 다중 선택 가능)")
+            return
+
+        selected_dirs = [self._dir_tree.item(s)["values"][0] for s in selected]
 
         from db import get_files_by_status
-        parent_dir = self._dir_var.get().strip() or None
-        pending = get_files_by_status("pending", parent_dir)
-        if not pending:
-            messagebox.showinfo("없음", "분류할 파일이 없습니다.\n(pending 상태 파일 없음)")
+        all_pending = []
+        for d in selected_dirs:
+            all_pending += get_files_by_status("pending", d)
+
+        if not all_pending:
+            messagebox.showinfo("없음", "선택한 폴더에 분류할 파일이 없습니다.\n(pending 상태 파일 없음)")
             return
 
-        self._total = len(pending)
-        self._done = 0
         self._progress.set(0)
         self._cls_btn.configure(state="disabled", text="분류 중...")
         self._log.configure(state="normal")
         self._log.delete("1.0", "end")
         self._log.configure(state="disabled")
-        self._log_write(f"▶ 분류 시작: {self._total}개 파일")
+        self._log_write(f"▶ 분류 시작: {len(selected_dirs)}개 폴더, {len(all_pending)}개 파일")
+        self._log_write(f"▶ 모델: {config.MODEL}")
+        self._log_write(f"▶ API: {config.COPILOT_BASE_URL}/chat/completions")
+        self._log_write("─" * 60)
 
         def worker():
             from classifier import classify as do_classify
-            do_classify(parent_dir,
-                        progress_callback=self._on_progress,
-                        log_callback=lambda msg: self.after(0, self._log_write, msg))
+            for d in selected_dirs:
+                self.after(0, self._log_write, f"\n📁 처리 중: {d}")
+                do_classify(d,
+                            progress_callback=self._on_progress,
+                            log_callback=lambda msg: self.after(0, self._log_write, msg))
             self.after(0, self._on_done)
 
         threading.Thread(target=worker, daemon=True).start()
@@ -588,9 +643,11 @@ class ClassifyFrame(ctk.CTkFrame):
         self.after(0, lambda m=f"{done}/{total}  {msg}": self._status_lbl.configure(text=m))
 
     def _on_done(self):
-        self._cls_btn.configure(state="normal", text="🤖  LLM 분류 시작")
+        self._cls_btn.configure(state="normal", text="🤖  선택한 폴더 LLM 분류 시작")
         self._progress.set(1)
-        self._log_write("✅ 분류 완료!  [검토 & 이동] 탭에서 결과를 확인하세요.")
+        self._reload_dirs()
+        self._log_write("\n" + "─" * 60)
+        self._log_write("✅ 완료!  [검토 & 이동] 탭에서 결과를 확인하세요.")
 
 
 # ══════════════════════════════════════════════════════════
