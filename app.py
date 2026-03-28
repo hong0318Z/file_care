@@ -468,15 +468,8 @@ class FilesFrame(ctk.CTkFrame):
                 "DB의 모든 파일 목록을 삭제합니다.\n실제 파일은 이동/삭제되지 않습니다.\n\n계속하시겠습니까?"):
             return
         try:
-            import sqlite3
-            import config
-            conn = sqlite3.connect(config.DB_PATH)
-            try:
-                conn.execute("DELETE FROM files")
-                conn.execute("DELETE FROM folders")
-                conn.commit()
-            finally:
-                conn.close()
+            from db import reset_db
+            reset_db()
             self._load()
             messagebox.showinfo("완료", "DB가 초기화되었습니다.")
         except Exception as e:
@@ -907,46 +900,46 @@ class SettingsFrame(ctk.CTkFrame):
         self._test_lbl.configure(text="연결 확인 중...", text_color="gray60")
 
         def worker():
-            import httpx
-            import config
-            url = f"{config.COPILOT_BASE_URL}/chat/completions"
-            headers = {
-                "Authorization": f"Bearer {token}",
-                "Content-Type": "application/json",
-                "Copilot-Integration-Id": "vscode-chat",
-            }
-            payload = {
-                "model": model,
-                "max_tokens": 10,
-                "messages": [{"role": "user", "content": "hi"}],
-            }
+            # finally 가 항상 실행되도록 worker 전체를 try-finally 로 감쌈
             try:
+                import httpx
+                import config
+                url = f"{config.COPILOT_BASE_URL}/chat/completions"
+                headers = {
+                    "Authorization": f"Bearer {token}",
+                    "Content-Type": "application/json",
+                    "Copilot-Integration-Id": "vscode-chat",
+                }
+                payload = {
+                    "model": model,
+                    "max_tokens": 10,
+                    "messages": [{"role": "user", "content": "hi"}],
+                }
                 self.after(0, lambda: self._test_lbl.configure(
                     text=f"요청 전송 중...  {url}", text_color="gray60"))
                 r = httpx.post(url, headers=headers, json=payload, timeout=15.0)
                 if r.status_code == 200:
                     data = r.json()
                     reply = data["choices"][0]["message"]["content"]
-                    self.after(0, lambda: self._test_lbl.configure(
-                        text=f"✅ 연결 성공!  모델: {model}  응답: {reply[:60]}",
+                    self.after(0, lambda rp=reply: self._test_lbl.configure(
+                        text=f"✅ 연결 성공!  모델: {model}  응답: {rp[:80]}",
                         text_color=COLOR_DONE))
                 else:
-                    body = r.text[:200]
+                    body = r.text[:300]
                     hint = ""
                     if "model_not_supported" in body or r.status_code == 400:
-                        hint = "\n→ 모델명을 확인하세요. 예: claude-sonnet-4.5"
+                        hint = "\n→ [지원 모델 조회] 버튼으로 정확한 모델명을 확인하세요."
                     elif r.status_code == 401:
                         hint = "\n→ 토큰이 올바르지 않거나 Copilot 권한이 없습니다."
-                    self.after(0, lambda b=body, h=hint: self._test_lbl.configure(
-                        text=f"❌ HTTP {r.status_code}: {b}{h}",
-                        text_color=COLOR_FAILED))
-            except httpx.TimeoutException:
-                self.after(0, lambda: self._test_lbl.configure(
-                    text="❌ 타임아웃 (15초 초과) — 네트워크 또는 URL을 확인하세요.",
-                    text_color=COLOR_FAILED))
+                    sc = r.status_code
+                    self.after(0, lambda b=body, h=hint, s=sc: self._test_lbl.configure(
+                        text=f"❌ HTTP {s}: {b}{h}", text_color=COLOR_FAILED))
             except Exception as e:
-                self.after(0, lambda err=str(e): self._test_lbl.configure(
-                    text=f"❌ 오류: {err[:200]}", text_color=COLOR_FAILED))
+                msg = str(e)
+                if "timed out" in msg.lower() or "timeout" in msg.lower():
+                    msg = "타임아웃 (15초 초과) — 네트워크를 확인하세요."
+                self.after(0, lambda m=msg: self._test_lbl.configure(
+                    text=f"❌ {m[:250]}", text_color=COLOR_FAILED))
             finally:
                 self.after(0, lambda: self._test_btn.configure(
                     state="normal", text="🔌 연결 테스트"))
@@ -964,9 +957,9 @@ class SettingsFrame(ctk.CTkFrame):
         self._models_lbl.configure(text="모델 목록 가져오는 중...", text_color="gray60")
 
         def worker():
-            import httpx
-            import config
             try:
+                import httpx
+                import config
                 r = httpx.get(
                     f"{config.COPILOT_BASE_URL}/models",
                     headers={
@@ -977,7 +970,6 @@ class SettingsFrame(ctk.CTkFrame):
                 )
                 if r.status_code == 200:
                     data = r.json()
-                    # 모델 ID 목록 추출
                     models = data.get("data", data) if isinstance(data, dict) else data
                     ids = [m.get("id", str(m)) for m in models]
                     claude_ids = [m for m in ids if "claude" in m.lower()]
@@ -987,16 +979,18 @@ class SettingsFrame(ctk.CTkFrame):
                         lines.append("🟣 Claude: " + "  |  ".join(claude_ids))
                     if other_ids:
                         lines.append("⚪ 기타: " + "  |  ".join(other_ids[:10]))
-                    msg = "\n".join(lines) if lines else f"원본: {r.text[:300]}"
+                    msg = "\n".join(lines) if lines else f"원본 응답: {r.text[:400]}"
                     self.after(0, lambda m=msg: self._models_lbl.configure(
                         text=m, text_color="#cccccc"))
                 else:
-                    self.after(0, lambda: self._models_lbl.configure(
-                        text=f"HTTP {r.status_code}: {r.text[:200]}",
-                        text_color=COLOR_FAILED))
+                    t = r.text[:300]
+                    s = r.status_code
+                    self.after(0, lambda tt=t, ss=s: self._models_lbl.configure(
+                        text=f"HTTP {ss}: {tt}", text_color=COLOR_FAILED))
             except Exception as e:
-                self.after(0, lambda err=str(e): self._models_lbl.configure(
-                    text=f"오류: {err[:200]}", text_color=COLOR_FAILED))
+                err = str(e)
+                self.after(0, lambda m=err: self._models_lbl.configure(
+                    text=f"오류: {m[:200]}", text_color=COLOR_FAILED))
             finally:
                 self.after(0, lambda: self._list_btn.configure(
                     state="normal", text="📋 지원 모델 조회"))
