@@ -468,9 +468,15 @@ class FilesFrame(ctk.CTkFrame):
                 "DB의 모든 파일 목록을 삭제합니다.\n실제 파일은 이동/삭제되지 않습니다.\n\n계속하시겠습니까?"):
             return
         try:
-            from db import get_conn
-            with get_conn() as conn:
-                conn.executescript("DELETE FROM files; DELETE FROM folders;")
+            import sqlite3
+            import config
+            conn = sqlite3.connect(config.DB_PATH)
+            try:
+                conn.execute("DELETE FROM files")
+                conn.execute("DELETE FROM folders")
+                conn.commit()
+            finally:
+                conn.close()
             self._load()
             messagebox.showinfo("완료", "DB가 초기화되었습니다.")
         except Exception as e:
