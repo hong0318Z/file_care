@@ -838,37 +838,46 @@ class SettingsFrame(ctk.CTkFrame):
         self._test_lbl.configure(text="연결 확인 중...", text_color="gray60")
 
         def worker():
+            import httpx
+            import config
+            url = f"{config.COPILOT_BASE_URL}/chat/completions"
+            headers = {
+                "Authorization": f"Bearer {token}",
+                "Content-Type": "application/json",
+                "Copilot-Integration-Id": "vscode-chat",
+            }
+            payload = {
+                "model": model,
+                "max_tokens": 10,
+                "messages": [{"role": "user", "content": "hi"}],
+            }
             try:
-                from openai import OpenAI
-                import httpx
-                import config
-                # 타임아웃 15초 설정
-                client = OpenAI(
-                    api_key=token,
-                    base_url=config.COPILOT_BASE_URL,
-                    timeout=15.0,
-                )
-                resp = client.chat.completions.create(
-                    model=model,
-                    max_tokens=16,
-                    messages=[{"role": "user", "content": "ping"}]
-                )
-                reply = resp.choices[0].message.content or "(응답 없음)"
                 self.after(0, lambda: self._test_lbl.configure(
-                    text=f"✅ 연결 성공!  모델: {model}  응답: {reply[:60]}",
-                    text_color=COLOR_DONE))
-            except Exception as e:
-                err = str(e)
-                hint = ""
-                if "model_not_supported" in err or "not supported" in err.lower():
-                    hint = "\n→ 모델명이 틀렸습니다. 예: claude-sonnet-4.5"
-                elif "401" in err or "unauthorized" in err.lower():
-                    hint = "\n→ 토큰이 올바르지 않거나 Copilot 권한이 없습니다."
-                elif "timed out" in err.lower() or "timeout" in err.lower():
-                    hint = "\n→ 네트워크 연결을 확인하세요."
+                    text=f"요청 전송 중...  {url}", text_color="gray60"))
+                r = httpx.post(url, headers=headers, json=payload, timeout=15.0)
+                if r.status_code == 200:
+                    data = r.json()
+                    reply = data["choices"][0]["message"]["content"]
+                    self.after(0, lambda: self._test_lbl.configure(
+                        text=f"✅ 연결 성공!  모델: {model}  응답: {reply[:60]}",
+                        text_color=COLOR_DONE))
+                else:
+                    body = r.text[:200]
+                    hint = ""
+                    if "model_not_supported" in body or r.status_code == 400:
+                        hint = "\n→ 모델명을 확인하세요. 예: claude-sonnet-4.5"
+                    elif r.status_code == 401:
+                        hint = "\n→ 토큰이 올바르지 않거나 Copilot 권한이 없습니다."
+                    self.after(0, lambda b=body, h=hint: self._test_lbl.configure(
+                        text=f"❌ HTTP {r.status_code}: {b}{h}",
+                        text_color=COLOR_FAILED))
+            except httpx.TimeoutException:
                 self.after(0, lambda: self._test_lbl.configure(
-                    text=f"❌ 연결 실패: {err[:150]}{hint}",
+                    text="❌ 타임아웃 (15초 초과) — 네트워크 또는 URL을 확인하세요.",
                     text_color=COLOR_FAILED))
+            except Exception as e:
+                self.after(0, lambda err=str(e): self._test_lbl.configure(
+                    text=f"❌ 오류: {err[:200]}", text_color=COLOR_FAILED))
             finally:
                 self.after(0, lambda: self._test_btn.configure(
                     state="normal", text="🔌 연결 테스트"))

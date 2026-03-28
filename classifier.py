@@ -1,6 +1,5 @@
 import json
-from openai import OpenAI
-from config import GITHUB_TOKEN, COPILOT_BASE_URL, MODEL, MAX_TOKENS, BATCH_SIZE
+import httpx
 from db import get_files_by_status, get_folders_by_parent, set_status
 from collections import defaultdict
 
@@ -75,7 +74,12 @@ def classify(parent_dir: str = None, progress_callback=None, log_callback=None):
         log("  [설정] 탭에서 GitHub 토큰을 입력해주세요.")
         return
 
-    client = OpenAI(api_key=token, base_url=config.COPILOT_BASE_URL)
+    url = f"{config.COPILOT_BASE_URL}/chat/completions"
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json",
+        "Copilot-Integration-Id": "vscode-chat",
+    }
 
     pending_files = get_files_by_status("pending", parent_dir)
     if not pending_files:
@@ -101,12 +105,13 @@ def classify(parent_dir: str = None, progress_callback=None, log_callback=None):
             prompt = _build_prompt(folder_context, batch)
 
             try:
-                response = client.chat.completions.create(
-                    model=config.MODEL,
-                    max_tokens=config.MAX_TOKENS,
-                    messages=[{"role": "user", "content": prompt}]
-                )
-                raw = response.choices[0].message.content.strip()
+                r = httpx.post(url, headers=headers, json={
+                    "model": config.MODEL,
+                    "max_tokens": config.MAX_TOKENS,
+                    "messages": [{"role": "user", "content": prompt}],
+                }, timeout=120.0)
+                r.raise_for_status()
+                raw = r.json()["choices"][0]["message"]["content"].strip()
 
                 if raw.startswith("```"):
                     raw = raw.split("```")[1]
